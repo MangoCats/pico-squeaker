@@ -8,8 +8,7 @@ import gc
 import _thread
 from time import sleep
 
-# The Web Server Thread
-# Turns web commands into actions onboard
+# The Web Server Thread - turns GET requests into actions onboard
 def core0_thread():
     import network
     import socket
@@ -31,15 +30,13 @@ def core0_thread():
 # Select the onboard LED
     led = machine.Pin("LED", machine.Pin.OUT)
     led.value(1)
-            
 # Set country code, opens legal WiFi channels
     country('US')
-    
 # GUI framework
     html = """<!DOCTYPE html>
 <html>
-  <head> <title>MangoCats Pico W</title> </head>
-  <body> <center> <font size="+6"> <h2>MangoCats <a href="/">Pico</a> W</h2>
+  <head><title>MangoCats Pico W</title></head>
+  <body><center><font size="+6"><h2>MangoCats <a href="/">Pico</a> W</h2>
     <table width="95%%" style="text-align:center"><tr>
       <td><a href="/light/on">LED ON</a></td>
       <td>{}<br/>{}F<br/>{} {}dBm</td>
@@ -147,7 +144,7 @@ from secrets import password
     easyPage = True
     while True:
       try:
-        stateis = "Started"
+        stateis = "Hello"
         cl, addr = s.accept()
         request = str( cl.recv(2048) )
         request = request[6:19]
@@ -229,12 +226,12 @@ from secrets import password
           maxrssi = -200
           apl = wlan.scan()
           for ap in apl:
-            if ( isinstance(ap, tuple) ):
-              if ( len(ap) > 3 ):
-                if ( ap[0].decode("utf-8") == ssid ):
-                  if ( ap[3] < minrssi ):
+            if isinstance(ap, tuple):
+              if len(ap) > 3:
+                if ap[0].decode("utf-8") == ssid:
+                  if ap[3] < minrssi:
                      minrssi = ap[3]
-                  if ( ap[3] > maxrssi ):
+                  if ap[3] > maxrssi:
                      maxrssi = ap[3] 
 
 # Send the updated GUI to the browser
@@ -300,32 +297,34 @@ def core1_thread():
     print("core1_thread starting")
     targ = 0.0
     while True:
-        if ( counter > 0 ):
+        if counter > 0:
           if pwmOff == True:
             pwmA.duty_u16( 32768 )   # duty 50% (65535/2)
-            pwmB.duty_u16( 32768 )   # duty 50% (65535/2)
+            pwmB.duty_u16( 32768 )
             shdn.on()                # amplifier on
-            print( "Sound on" )
+            print("Sound on")
             pwmOff = False
           print( counter )  
           counter -= 1
-
-          # work through the modulators for the next second
-          while ( targ < math.pi * 2.0 ):
-            pwmA.freq( int( float(freq1) * (1.0 + fRng1 * math.sin( targ * 1000.0 / float(oscP1) ) ) ) )
-            pwmB.freq( int( float(freq2) * (1.0 + fRng2 * math.sin( targ * 1000.0 / float(oscP2) ) ) ) )
-            targ += (math.pi * 2.0) * tSlic; # base modulation frequency of 1 Hz, modified by 1000/oscPx
+          
+          oscC1 = 1000.0 / float(oscP1) # convert the modulation periods (in ms) to coefficients
+          oscC2 = 1000.0 / float(oscP2)
+          tDone = targ + math.pi * 2.0
+          while targ < tDone:           # work through the modulators for the next second
+            pwmA.freq( int( float(freq1) * (1.0 + fRng1 * math.sin( targ * oscC1 ) ) ) )
+            pwmB.freq( int( float(freq2) * (1.0 + fRng2 * math.sin( targ * oscC2 ) ) ) )
+            targ += math.pi * 2.0 * tSlic;
             sleep( tSlic )
-          while ( targ >= math.pi * 2.0 ): 
-            targ -= math.pi * 2.0           # keep targ near 0.0, but let little errors ride into the next second
             
         else: # counter is not > 0
-          if ( pwmOff == False ):
+          if pwmOff == False:
             pwmA.duty_u16( 0 )   # stop oscillation
-            pwmB.duty_u16( 0 )   # stop oscillation
+            pwmB.duty_u16( 0 )
             shdn.off()           # amplifier off
-            print( "Sound off" )
+            print("Sound off")
+            targ = 0.0           # keep targ in a reasonable range
             pwmOff = True        
+          sleep( 0.1 )           # save a bit of power
           
         if shutdown == True:
           pwmA.deinit()
