@@ -307,13 +307,16 @@ def core1_thread():
           print( counter )  
           counter -= 1
           
-          oscC1 = 1000.0 / float(oscP1) # convert the modulation periods (in ms) to coefficients
+          oscC1 = 1000.0 / float(oscP1)  # convert the modulation periods (in ms) to coefficients
           oscC2 = 1000.0 / float(oscP2)
+          fMod1 = float(freq1) * fRng1   # frequency modulation depths
+          fMod2 = float(freq2) * fRng2
           tDone = targ + math.pi * 2.0
-          while targ < tDone:           # work through the modulators for the next second
-            pwmA.freq( int( float(freq1) * (1.0 + fRng1 * math.sin( targ * oscC1 ) ) ) )
-            pwmB.freq( int( float(freq2) * (1.0 + fRng2 * math.sin( targ * oscC2 ) ) ) )
-            targ += math.pi * 2.0 * tSlic;
+          slicI = math.pi * 2.0 * tSlic;
+          while targ < tDone:            # work through the modulators for the next second
+            pwmA.freq( freq1 + int( fMod1 * math.sin( targ * oscC1 ) ) )
+            pwmB.freq( freq2 + int( fMod2 * math.sin( targ * oscC2 ) ) )
+            targ += slicI;
             sleep( tSlic )
             
         else: # counter is not > 0
