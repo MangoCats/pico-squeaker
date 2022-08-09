@@ -38,8 +38,8 @@ def core0_thread():
 # GUI framework
     html = """<!DOCTYPE html>
 <html>
-  <head> <title>MangoCats <a href="/">Pico</a> W</title> </head>
-  <body> <center> <font size="+6"> <h2>MangoCats Pico W</h2>
+  <head> <title>MangoCats Pico W</title> </head>
+  <body> <center> <font size="+6"> <h2>MangoCats <a href="/">Pico</a> W</h2>
     <table width="95%%" style="text-align:center"><tr>
       <td><a href="/light/on">LED ON</a></td>
       <td>{}<br/>{}F<br/>{} {}dBm</td>
@@ -89,8 +89,8 @@ def core0_thread():
     
     easyHtml = """<!DOCTYPE html>
 <html>
-  <head> <title>MangoCats <a href="/advanced">Pico</a> W</title> </head>
-  <body> <center> <font size="+6"> <h2>MangoCats Pico W</h2>
+  <head><title>MangoCats Pico W</title></head>
+  <body><center><font size="+6"><h2>MangoCats <a href="/advanced">Pico</a> W</h2>
     <table width="95%%" style="text-align:center"><tr>
       <td>{}F</td>
       <td>{}</td>
