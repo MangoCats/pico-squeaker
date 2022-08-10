@@ -157,64 +157,68 @@ from secrets import password
           if 0 == request.find('/ '):
             easyPage = True  
             
-          if 0 == request.find('/light/on'):
-            led.value(1)
-            stateis = "LED is ON"
-            easyPage = False
- 
-          if 0 == request.find('/light/off'):
-            led.value(0)
-            stateis = "LED is OFF"
-            easyPage = False
-          
-          if 0 == request.find('/sound/'):
+          elif 0 == request.find('/sound/'):
             counter = int(request[7:9])
             stateis = "Sound On %s" % counter
             # easyPage is unchanged
             
-          if 0 == request.find('/freq1/'):
+          elif 0 == request.find('/light/on'):
+            led.value(1)
+            stateis = "LED is ON"
+            easyPage = False
+ 
+          elif 0 == request.find('/light/off'):
+            led.value(0)
+            stateis = "LED is OFF"
+            easyPage = False
+          
+          elif 0 == request.find('/freq1/'):
             freq1 = int(request[7:12])
             stateis = "Freq1 %sHz" % freq1
             easyPage = False
           
-          if 0 == request.find('/freq2/'):
+          elif 0 == request.find('/freq2/'):
             freq2 = int(request[7:12])
             stateis = "Freq2 %sHz" % freq2
             easyPage = False
           
-          if 0 == request.find('/fRng1/'):
+          elif 0 == request.find('/fRng1/'):
             fRng1 = float( request[7:12] )
             stateis = "fRng1 %sx" % fRng1
             easyPage = False
           
-          if 0 == request.find('/fRng2/'):
+          elif 0 == request.find('/fRng2/'):
             fRng2 = float( request[7:12] )
             stateis = "fRng2 %sx" % fRng2
             easyPage = False
 
-          if 0 == request.find('/oscP1/'):
+          elif 0 == request.find('/oscP1/'):
             oscP1 = int(request[7:12])
             stateis = "oscP1 %sms" % oscP1
             easyPage = False
           
-          if 0 == request.find('/oscP2/'):
+          elif 0 == request.find('/oscP2/'):
             oscP2 = int(request[7:12])
             stateis = "oscP2 %sms" % oscP2
             easyPage = False
           
-          if 0 == request.find('/tSlic/'):
+          elif 0 == request.find('/tSlic/'):
             tSlic = float( request[7:12] )
             stateis = "tSlic %sms" % (tSlic * 1000.0)
             easyPage = False
           
-          if 0 == request.find('/exit'):
+          elif 0 == request.find('/exit'):
             stateis = "Exiting."
             shutdown = True
             easyPage = False
             
-          if 0 == request.find('/advanced'):
+          elif 0 == request.find('/advanced'):
             stateis = "Advanced"
             easyPage = False
+            
+          else:  
+            stateis = "Unknown cmd"
+            # easyPage is unchanged
 
 # take a temperature reading
           reading = sensor_temp.read_u16() * conversion_factor 
