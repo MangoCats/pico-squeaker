@@ -104,8 +104,8 @@ def core0_thread():
   </body>
 </html>
 """
-from secrets import ssid
-from secrets import password
+    from secrets import ssid
+    from secrets import password
     
     print("core0_thread starting")
 
@@ -210,7 +210,7 @@ from secrets import password
           elif 0 == request.find('/exit'):
             stateis = "Exiting."
             shutdown = True
-            easyPage = False
+            easyPage = True
             
           elif 0 == request.find('/advanced'):
             stateis = "Advanced"
@@ -281,8 +281,8 @@ def core1_thread():
     global tSlic
     shutdown = False
     counter = 0
-    freq1 = 3500
-    freq2 = 6000
+    freq1 = 20000
+    freq2 = 19000
     fRng1 = 0.1
     fRng2 = 0.3
     oscP1 = 225
