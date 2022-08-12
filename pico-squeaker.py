@@ -28,7 +28,7 @@ def core0_thread():
     from machine import Pin, ADC
 # Temperature sensor
     sensor_temp = ADC(4)
-    conversion_factor = 3.3 / (65535)
+    conversion_factor = 3.3 / 65535.0
 # Select the onboard LED
     led = machine.Pin("LED", machine.Pin.OUT)
     led.value(1)
@@ -228,8 +228,8 @@ def core0_thread():
 
 # take a temperature reading
           reading = sensor_temp.read_u16() * conversion_factor 
-          temperature = 27 - (reading - 0.706)/0.001721
-          farenheit = temperature * 9 / 5 + 32
+          temperature = 27.0 - (reading - 0.706)/0.001721
+          farenheit = temperature * 9.0 / 5.0 + 32.0
 
 # Read strongest connection to ssid
           maxrssi = -200
@@ -275,7 +275,7 @@ def core0_thread():
 def core1_thread():
     from machine import Pin, PWM
     import math
-    pwmOff = False
+    pwmOff = True
     pwmA = PWM( Pin ( 22 ) ) # GP22, pin 29
     pwmA.freq( freq1 ) 
     pwmA.duty_u16( 0 )
@@ -293,9 +293,9 @@ def core1_thread():
             pwmA.duty_u16( 32768 )   # duty 50% (65535/2)
             pwmB.duty_u16( 32768 )
             shdn.on()                # amplifier on
-            print("Sound on")
+#            print("Sound on")
             pwmOff = False
-          print( counter )  
+#          print( counter )  
           counter -= 1
           
           oscC1 = 1000.0 / float(oscP1)  # convert the modulation periods (in ms) to coefficients
@@ -315,7 +315,7 @@ def core1_thread():
             pwmA.duty_u16( 0 )   # stop oscillation
             pwmB.duty_u16( 0 )
             shdn.off()           # amplifier off
-            print("Sound off")
+#            print("Sound off")
             targ = 0.0           # keep targ in a reasonable range
             pwmOff = True        
           sleep( 0.2 )           # save a bit of power
