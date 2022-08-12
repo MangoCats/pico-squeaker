@@ -2,6 +2,8 @@
 # presents a webpage interface which controls two PWM outputs and an amplifier enable signal
 # v1.0 deployed 2022-8-7
 # adding an "easy" interface page in addition to the advanced controls
+# disabling signal strength parser: seems problematic
+# v1.1 deployed 2022-8-11
 
 # imports used in both threads
 import gc
@@ -228,15 +230,15 @@ def core0_thread():
 # Read strongest and weakest connection to ssid
           minrssi = 0
           maxrssi = -200
-          apl = wlan.scan()
-          for ap in apl:
-            if isinstance(ap, tuple):
-              if len(ap) > 3:
-                if ap[0].decode("utf-8") == ssid:
-                  if ap[3] < minrssi:
-                     minrssi = ap[3]
-                  if ap[3] > maxrssi:
-                     maxrssi = ap[3] 
+#          apl = wlan.scan()
+#          for ap in apl:
+#            if isinstance(ap, tuple):
+#              if len(ap) > 3:
+#                if ap[0].decode("utf-8") == ssid:
+#                  if ap[3] < minrssi:
+#                     minrssi = ap[3]
+#                  if ap[3] > maxrssi:
+#                     maxrssi = ap[3] 
 
 # Send the updated GUI to the browser
           cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
@@ -290,11 +292,11 @@ def core1_thread():
     tSlic = 0.04
     pwmOff = False
     pwmA = PWM( Pin ( 22 ) ) # GP22, pin 29
-    pwmA.freq( freq1 )       # 3.5kHz 
-    pwmA.duty_u16( 32768 )   # duty 50% (65535/2)
+    pwmA.freq( freq1 ) 
+    pwmA.duty_u16( 0 )
     pwmB = PWM( Pin ( 21 ) ) # GP21, pin 27
-    pwmB.freq( freq2 )       # 6.0kHz 
-    pwmB.duty_u16( 32768 )   # duty 50% (65535/2)
+    pwmB.freq( freq2 ) 
+    pwmB.duty_u16( 0 )
     shdn = machine.Pin( 19, machine.Pin.OUT ) # GP19, pin 25
     shdn.value(0)            # default to amplifier off
     
@@ -331,7 +333,7 @@ def core1_thread():
             print("Sound off")
             targ = 0.0           # keep targ in a reasonable range
             pwmOff = True        
-          sleep( 0.1 )           # save a bit of power
+          sleep( 0.2 )           # save a bit of power
           
         if shutdown == True:
           pwmA.deinit()
