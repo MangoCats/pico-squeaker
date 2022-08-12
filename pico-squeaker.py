@@ -106,14 +106,18 @@ def core0_thread():
   </body>
 </html>
 """
-    from secrets import ssid
-    from secrets import password
+    from secrets import secrets
+    try:
+      from secrets import secrets
+    except ImportError:
+      print("Error reading secrets.py")
+      raise RuntimeError('secrets could not be read')
     
     print("core0_thread starting")
 
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
-    wlan.connect(ssid, password)
+    wlan.connect(secrets['ssid'],secrets['password'])
 
 # Wait for connect or fail
     max_wait = 25
