@@ -41,7 +41,7 @@ def core0_thread():
   <body><center><font size="+6"><h2>MangoCats <a href="/">Pico</a> W</h2>
     <table width="95%%" style="text-align:center"><tr>
       <td><a href="/light/on">LED ON</a></td>
-      <td>{}<br/>{}F<br/>{} {}dBm</td>
+      <td>{}<br/>{}F<br/>{}dBm</td>
       <td><a href="/light/off">LED OFF</a></td>
     </tr><tr>
       <td><br/><a href="/sound/01">1 sec</a></td>
@@ -93,7 +93,7 @@ def core0_thread():
     <table width="95%%" style="text-align:center"><tr>
       <td>{}F</td>
       <td>{}</td>
-      <td>{} {}dBm</td>
+      <td>{}dBm</td>
     </tr><tr>
       <td><br/><a href="/sound/01">1 sec</a></td>
       <td><br/><a href="/sound/05">5 secs</a></td>
@@ -231,26 +231,24 @@ def core0_thread():
           temperature = 27 - (reading - 0.706)/0.001721
           farenheit = temperature * 9 / 5 + 32
 
-# Read strongest and weakest connection to ssid
-          minrssi = 0
+# Read strongest connection to ssid
           maxrssi = -200
-#          apl = wlan.scan()
-#          for ap in apl:
-#            if isinstance(ap, tuple):
-#              if len(ap) > 3:
-#                if ap[0].decode("utf-8") == ssid:
-#                  if ap[3] < minrssi:
-#                     minrssi = ap[3]
-#                  if ap[3] > maxrssi:
-#                     maxrssi = ap[3] 
+          apl = wlan.scan()
+          if isinstance(apl, tuple):
+            for ap in apl:
+              if isinstance(ap, tuple):
+                if len(ap) > 3:
+                  if ap[0].decode("utf-8") == ssid:
+                    if ap[3] > maxrssi:
+                      maxrssi = ap[3] 
 
 # Send the updated GUI to the browser
           cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
           if easyPage == True:
-            cl.send( easyHtml.format( farenheit, stateis, minrssi, maxrssi ) )
+            cl.send( easyHtml.format( farenheit, stateis, maxrssi ) )
             led.value(0) # LED is always off when using the easy interface
           else:
-            cl.send( html.format( stateis, farenheit, minrssi, maxrssi, freq1, freq2, fRng1, fRng2, oscP1, oscP2, tSlic ) )
+            cl.send( html.format( stateis, farenheit, maxrssi, freq1, freq2, fRng1, fRng2, oscP1, oscP2, tSlic ) )
           cl.close()
     
           if shutdown == True:
