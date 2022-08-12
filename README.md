@@ -14,7 +14,7 @@ Project Bill of Materials (adafruit part numbers)
 - (2193) 100uF 16v capacitors
 - (1950) 6" 20 Female/Female jumper wires
 - (1951) 3" 20 Female/Female jumper wires
-- piezo speakers x4
+- piezo speakers x4 [these](https://amazon.com/gp/product/B08SLZBKCH) or [these](https://amazon.com/gp/product/B09L7LHZML) worked well
 - hookup wire from amplifier to speakers
 - custom wooden box with hinged lid & pole mount
 - #6x1/2" screws to mount solar panels to box
