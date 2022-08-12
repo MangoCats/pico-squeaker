@@ -286,7 +286,7 @@ def core1_thread():
     shdn.value(0)            # default to amplifier off
     
     print("core1_thread starting")
-    targ = 0.0
+    targ = math.pi * -30.0
     while True:
         if counter > 0:
           if pwmOff == True:
@@ -312,18 +312,18 @@ def core1_thread():
             
         else: # counter is not > 0
           if pwmOff == False:
-            pwmA.duty_u16( 0 )   # stop oscillation
+            pwmA.duty_u16( 0 )     # stop oscillation
             pwmB.duty_u16( 0 )
-            shdn.off()           # amplifier off
+            shdn.off()             # amplifier off
 #            print("Sound off")
-            targ = 0.0           # keep targ in a reasonable range
+            targ = math.pi * -30.0 # keep targ in a reasonable range
             pwmOff = True        
-          sleep( 0.2 )           # save a bit of power
+          sleep( 0.2 )             # save a bit of power
           
         if shutdown == True:
           pwmA.deinit()
           pwmB.deinit()
-          shdn.off()           # amplifier off
+          shdn.off()    # amplifier off
           print("core1_thread exiting")
           break
         
