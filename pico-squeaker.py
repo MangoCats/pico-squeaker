@@ -10,22 +10,22 @@ import gc
 import _thread
 from time import sleep
 
+global counter  = 0
+global shutdown = False
+global freq1 = 20000
+global freq2 = 19000
+global fRng1 = 0.3
+global fRng2 = 0.1
+global oscP1 = 225
+global oscP2 = 3500
+global tSlic = 0.04
+
 # The Web Server Thread - turns GET requests into actions onboard
 def core0_thread():
     import network
     import socket
     from rp2 import country
     from machine import Pin, ADC
-    global counter
-    global shutdown
-    global freq1
-    global freq2
-    global fRng1
-    global fRng2
-    global oscP1
-    global oscP2
-    global tSlic
-    shutdown = False
 # Temperature sensor
     sensor_temp = ADC(4)
     conversion_factor = 3.3 / (65535)
@@ -130,7 +130,7 @@ def core0_thread():
   
 # Handle connection error
     if wlan.status() != 3:
-       raise RuntimeError('network connection failed')
+      raise RuntimeError('network connection failed')
     else:
       print('connected')
       status = wlan.ifconfig()
@@ -275,24 +275,6 @@ def core0_thread():
 def core1_thread():
     from machine import Pin, PWM
     import math
-    global counter
-    global shutdown
-    global freq1
-    global freq2
-    global fRng1
-    global fRng2
-    global oscP1
-    global oscP2
-    global tSlic
-    shutdown = False
-    counter = 0
-    freq1 = 20000
-    freq2 = 19000
-    fRng1 = 0.1
-    fRng2 = 0.3
-    oscP1 = 225
-    oscP2 = 3500
-    tSlic = 0.04
     pwmOff = False
     pwmA = PWM( Pin ( 22 ) ) # GP22, pin 29
     pwmA.freq( freq1 ) 
