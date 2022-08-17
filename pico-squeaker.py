@@ -240,8 +240,9 @@ def core0_thread():
                 if isinstance(ap, tuple):
                   if len(ap) > 3:
                     if ap[0].decode("utf-8") == ssid:
-                      if ap[3] > maxrssi:
-                        maxrssi = ap[3] 
+                      if isinstance(ap[3], int):
+                        if ap[3] > maxrssi:
+                          maxrssi = ap[3] 
 
 # Send the updated GUI to the browser
           cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
