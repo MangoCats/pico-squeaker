@@ -4,6 +4,9 @@
 # adding an "easy" interface page in addition to the advanced controls
 # disabling signal strength parser: seems problematic
 # v1.1 deployed 2022-8-11
+# adding battery voltage monitor (input to ADC1 midpoint of a 67.5k-150k divider network)
+# adding input of the charging indicator from the bq24074
+# v1.2 deployed 2022-8-20
 
 # imports used in both threads
 import gc
@@ -26,12 +29,15 @@ def core0_thread():
     import socket
     from rp2 import country
     from machine import Pin, ADC
-# Temperature sensor
+# Temperature sensor and Battery Voltage
     sensor_temp = ADC(4)
-    conversion_factor = 3.3 / 65535.0
+    batt_adc    = ADC(1)
+    conversion_factor = 3.3 / 65535.0   
 # Select the onboard LED
     led = machine.Pin("LED", machine.Pin.OUT)
     led.value(1)
+# Charging indicator from bq24074
+    chg_pin = machine.Pin("GP20", machine.Pin.IN)
 # Set country code, opens legal WiFi channels
     country('US')
 # GUI framework
@@ -41,7 +47,7 @@ def core0_thread():
   <body><center><font size="+6"><h2>MangoCats <a href="/">Pico</a> W</h2>
     <table width="95%%" style="text-align:center"><tr>
       <td><a href="/light/on">LED ON</a></td>
-      <td>{}<br/>{}F<br/>{}dBm</td>
+      <td>{}<br/>{}F<br/>{}V<br/>{}<br/>{}dBm</td>
       <td><a href="/light/off">LED OFF</a></td>
     </tr><tr>
       <td><br/><a href="/sound/01">1 sec</a></td>
@@ -91,9 +97,9 @@ def core0_thread():
   <head><title>MangoCats Pico W</title></head>
   <body><center><font size="+6"><h2>MangoCats <a href="/advanced">Pico</a> W</h2>
     <table width="95%%" style="text-align:center"><tr>
-      <td>{}F</td>
+      <td>{}F<br/>{}V</td>
       <td>{}</td>
-      <td>{}s</td>
+      <td>{}s<br/>{}</td>
     </tr><tr>
       <td><br/><a href="/sound/01">1 sec</a></td>
       <td><br/><a href="/sound/05">5 secs</a></td>
@@ -230,6 +236,10 @@ def core0_thread():
           reading = sensor_temp.read_u16() * conversion_factor 
           temperature = 27.0 - (reading - 0.706)/0.001721
           farenheit = temperature * 9.0 / 5.0 + 32.0
+          
+# read the battery voltage          
+          reading = batt_adc.read_u16() * conversion_factor
+          battV = reading * (150.0+67.5) / 150.0
 
 # Read strongest connection to ssid
           maxrssi = -200
@@ -247,10 +257,14 @@ def core0_thread():
 # Send the updated GUI to the browser
           cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
           if easyPage == True:
-            cl.send( easyHtml.format( farenheit, stateis, count ) )
+            if chg_pin.value() == True:
+              cmsg = "Charging"
+            else:
+              cmsg = "Not Charging"
+            cl.send( easyHtml.format( farenheit, battV, stateis, count, cmsg ) )
             led.value(0) # LED is always off when using the easy interface
           else:
-            cl.send( html.format( stateis, farenheit, maxrssi, freq1, freq2, fRng1, fRng2, oscP1, oscP2, tSlic ) )
+            cl.send( html.format( stateis, farenheit, battV, cmsg, maxrssi, freq1, freq2, fRng1, fRng2, oscP1, oscP2, tSlic ) )
           cl.close()
     
           if shutdown == True:
