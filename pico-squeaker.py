@@ -123,18 +123,12 @@ def core0_thread():
   </body>
 </html>
 """
-    from secrets import secrets
-    try:
-      from secrets import secrets
-    except ImportError:
-      print("Error reading secrets.py")
-      raise RuntimeError('secrets could not be read')
     
     print("core0_thread starting")
 
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
-    wlan.connect(secrets['ssid'],secrets['password'])
+    wlan.connect('ImNot','Telling')
 
 # Wait for connect or fail
     max_wait = 25
@@ -269,10 +263,10 @@ def core0_thread():
           cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
           if easyPage == True:
             if chg_pin.value() == True:
-              cmsg = "Charging"
-            else:
               cmsg = "Not Charging"
-            cl.send( easyHtml.format( farenheit, battV, stateis, count, cmsg ) )
+            else:
+              cmsg = "Charging"
+            cl.send( easyHtml.format( farenheit, battV, stateis, counter, cmsg ) )
             led.value(0) # LED is always off when using the easy interface
           else:
             cl.send( html.format( stateis, farenheit, battV, cmsg, maxrssi, freq1, freq2, fRng1, fRng2, oscP1, oscP2, tSlic ) )
