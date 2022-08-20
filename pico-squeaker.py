@@ -257,19 +257,33 @@ def core0_thread():
                     if ap[0].decode("utf-8") == ssid:
                       if isinstance(ap[3], int):
                         if ap[3] > maxrssi:
-                          maxrssi = ap[3] 
-
+                          maxrssi = ap[3]
+                          
+# Read the charging pin from the bq24074        
+          if chg_pin.value() == True:
+            cmsg = "Not Charging"
+          else:
+            cmsg = "Charging"
+            
 # Send the updated GUI to the browser
           cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
           if easyPage == True:
-            if chg_pin.value() == True:
-              cmsg = "Not Charging"
-            else:
-              cmsg = "Charging"
-            cl.send( easyHtml.format( farenheit, battV, stateis, counter, cmsg ) )
+            cl.send( easyHtml.format( farenheit,
+                                      battV,
+                                      stateis,
+                                      counter,
+                                      cmsg ) )
             led.value(0) # LED is always off when using the easy interface
           else:
-            cl.send( html.format( stateis, farenheit, battV, cmsg, maxrssi, freq1, freq2, fRng1, fRng2, oscP1, oscP2, tSlic ) )
+            cl.send( html.format( stateis,
+                                  farenheit,
+                                  battV,
+                                  cmsg,
+                                  maxrssi,
+                                  freq1, freq2,
+                                  fRng1, fRng2,
+                                  oscP1, oscP2,
+                                  tSlic ) )
           cl.close()
     
           if shutdown == True:
