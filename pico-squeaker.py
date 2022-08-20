@@ -7,21 +7,12 @@
 # adding battery voltage monitor (input to ADC1 midpoint of a 67.5k-150k divider network)
 # adding input of the charging indicator from the bq24074
 # v1.2 deployed 2022-8-20
-
+#
 # imports used in both threads
-import gc
-import _thread
 from time import sleep
+import _thread
+import gc
 
-global counter  = 0
-global shutdown = False
-global freq1 = 20000
-global freq2 = 19000
-global fRng1 = 0.3
-global fRng2 = 0.1
-global oscP1 = 225
-global oscP2 = 3500
-global tSlic = 0.04
 
 # The Web Server Thread - turns GET requests into actions onboard
 def core0_thread():
@@ -29,6 +20,26 @@ def core0_thread():
     import socket
     from rp2 import country
     from machine import Pin, ADC
+
+    global counter
+    global shutdown
+    global freq1
+    global freq2
+    global fRng1
+    global fRng2
+    global oscP1
+    global oscP2
+    global tSlic
+
+    counter  = 0
+    shutdown = False
+    freq1 = 20000
+    freq2 = 19000
+    fRng1 = 0.3
+    fRng2 = 0.1
+    oscP1 = 225
+    oscP2 = 3500
+    tSlic = 0.04
 # Temperature sensor and Battery Voltage
     sensor_temp = ADC(4)
     batt_adc    = ADC(1)
@@ -37,7 +48,7 @@ def core0_thread():
     led = machine.Pin("LED", machine.Pin.OUT)
     led.value(1)
 # Charging indicator from bq24074
-    chg_pin = machine.Pin("GP20", machine.Pin.IN)
+    chg_pin = machine.Pin(20, machine.Pin.IN)
 # Set country code, opens legal WiFi channels
     country('US')
 # GUI framework
@@ -290,6 +301,27 @@ def core0_thread():
 def core1_thread():
     from machine import Pin, PWM
     import math
+    
+    global counter
+    global shutdown
+    global freq1
+    global freq2
+    global fRng1
+    global fRng2
+    global oscP1
+    global oscP2
+    global tSlic
+        
+    counter  = 0
+    shutdown = False
+    freq1 = 20000
+    freq2 = 19000
+    fRng1 = 0.3
+    fRng2 = 0.1
+    oscP1 = 225
+    oscP2 = 3500
+    tSlic = 0.04
+
     pwmOff = True
     pwmA = PWM( Pin ( 22 ) ) # GP22, pin 29
     pwmA.freq( freq1 ) 
