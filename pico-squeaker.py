@@ -21,6 +21,10 @@ def core0_thread():
     from rp2 import country
     from machine import Pin, ADC
 
+# Select the onboard LED
+    led = machine.Pin("LED", machine.Pin.OUT)
+    led.value(1)
+    
     global counter
     global shutdown
     global freq1
@@ -42,11 +46,8 @@ def core0_thread():
     tSlic = 0.04
 # Temperature sensor and Battery Voltage
     sensor_temp = ADC(4)
-    batt_adc    = ADC(1)
-    conversion_factor = 3.3 / 65535.0   
-# Select the onboard LED
-    led = machine.Pin("LED", machine.Pin.OUT)
-    led.value(1)
+    batt_adc    = machine.ADC(27)
+    conversion_factor = 3.3 / 65535.0  
 # Charging indicator from bq24074
     chg_pin = machine.Pin(20, machine.Pin.IN)
 # Set country code, opens legal WiFi channels
@@ -124,11 +125,14 @@ def core0_thread():
 </html>
 """
     
-    print("core0_thread starting")
+    ssid = 'ImNot'
+    password = 'telling'
 
+    print("core0_thread starting")
+    
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
-    wlan.connect('ImNot','Telling')
+    wlan.connect( ssid, password )
 
 # Wait for connect or fail
     max_wait = 25
@@ -243,22 +247,31 @@ def core0_thread():
           farenheit = temperature * 9.0 / 5.0 + 32.0
           
 # read the battery voltage          
-          reading = batt_adc.read_u16() * conversion_factor
-          battV = reading * (150.0+67.5) / 150.0
+          reading = batt_adc.read_u16() * 3.3 / 32767.0
+          battV = reading * (150.0+68.0) / 150.0
 
 # Read strongest connection to ssid
           maxrssi = -200
-          if easyPage == False:
+          if easyPage != True:
             apl = wlan.scan()
-            if isinstance(apl, tuple):
+            if isinstance(apl, (list, tuple)):
               for ap in apl:
                 if isinstance(ap, tuple):
                   if len(ap) > 3:
                     if ap[0].decode("utf-8") == ssid:
-                      if isinstance(ap[3], int):
-                        if ap[3] > maxrssi:
-                          maxrssi = ap[3]
-                          
+                      rssi = ap[3]
+                      if isinstance(rssi, (int, float)):
+                        if rssi > maxrssi:
+                          maxrssi = rssi
+                      else:
+                        print( "rssi not a number?", rssi )
+                  else:
+                    print( "ap tuple len is", len(ap) )
+                else:
+                  print( "ap is not a tuple?", ap )
+            else:
+              print( "apl is not a tuple or list?", apl )
+            
 # Read the charging pin from the bq24074        
           if chg_pin.value() == True:
             cmsg = "Not Charging"
