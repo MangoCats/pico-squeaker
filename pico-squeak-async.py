@@ -7,23 +7,77 @@
 # adding battery voltage monitor (input to ADC1 midpoint of a 67.5k-150k divider network)
 # adding input of the charging indicator from the bq24074
 # v1.2 deployed 2022-8-20
+# re-architecht web interface to async implementation
 #
 # imports used in both threads
 from time import sleep
 import _thread
 import gc
+import uasyncio as asyncio
+from machine import Pin, ADC    
+import network
+
+# GPIO assignments (GPIO #s, not pin #s)
+GPIO_BATT_VOLTAGE=27
+GPIO_PWM_A=22
+GPIO_PWM_B=21
+GPIO_CHARGING=20
+GPIO_AMP_SHUTDOWN=19
+GPIO_TEMP_SENSOR=4
+
+# Select the onboard LED
+led = machine.Pin("LED", machine.Pin.OUT)
+
+# Network variables
+wlan = network.WLAN(network.STA_IF)
+ssid = 'Imnot'
+password = 'telling'
+
+async def connect_to_network( connectedEvent ):
+# LED on while attempting connection
+    led.value(1)
+    
+    if wlan.status() == 3:
+      print( "wifi already connected" )
+    else:
+      print( "connecting wifi to", ssid )
+      
+      wlan.active(True)
+#  wlan.config(pm = 0xa11140) # disable low power mode
+      wlan.connect( ssid, password )
+
+# Wait for connect or fail
+      max_wait = 25
+      while max_wait > 0:
+        if wlan.status() < 0 or wlan.status() >= 3:
+          break
+        max_wait -= 1
+        print('waiting for connection...',max_wait)
+        await asyncio.sleep(1)
+
+# Handle connection error
+    if wlan.status() != 3:
+      raise RuntimeError('connection failed to',ssid)
+    else:
+      print('connected to',ssid)
+      status = wlan.ifconfig()
+      print( 'ip = ' + status[0] )
+      connectedEvent.set()
+
+# Connection attempt is over, light out.
+    await asyncio.sleep(1)
+    led.value(0)
+    
+# endof async def connect_to_network():
 
 
 # The Web Server Thread - turns GET requests into actions onboard
-def core0_thread():
-    import network
+async def main():
+# Launch other threads
+    second_thread = _thread.start_new_thread(core1_thread, ())
+    
     import socket
     from rp2 import country
-    from machine import Pin, ADC
-
-# Select the onboard LED
-    led = machine.Pin("LED", machine.Pin.OUT)
-    led.value(1)
     
     global counter
     global shutdown
@@ -45,18 +99,18 @@ def core0_thread():
     oscP2 = 3500
     tSlic = 0.04
 # Temperature sensor and Battery Voltage
-    sensor_temp = ADC(4)
-    batt_adc    = machine.ADC(27)
+    sensor_temp = ADC(GPIO_TEMP_SENSOR)
+    batt_adc    = machine.ADC(GPIO_BATT_VOLTAGE)
     conversion_factor = 3.3 / 65535.0  
 # Charging indicator from bq24074
-    chg_pin = machine.Pin(20, machine.Pin.IN)
+    chg_pin = machine.Pin(GPIO_CHARGING, machine.Pin.IN)
 # Set country code, opens legal WiFi channels
     country('US')
 # GUI framework
     html = """<!DOCTYPE html>
 <html>
-  <head><title>MangoCats Pico W</title></head>
-  <body><center><font size="+6"><h2>MangoCats <a href="/">Pico</a> W</h2>
+  <head><title>MangoCats Pico 13</title></head>
+  <body><center><font size="+6"><h2>MangoCats <a href="/">Pico</a> 13</h2>
     <table width="95%%" style="text-align:center"><tr>
       <td><a href="/light/on">LED ON</a></td>
       <td>{}<br/>{}F<br/>{}V<br/>{}<br/>{}dBm</td>
@@ -106,8 +160,8 @@ def core0_thread():
     
     easyHtml = """<!DOCTYPE html>
 <html>
-  <head><title>MangoCats Pico W</title></head>
-  <body><center><font size="+6"><h2>MangoCats <a href="/advanced">Pico</a> W</h2>
+  <head><title>MangoCats Pico 13</title></head>
+  <body><center><font size="+6"><h2>MangoCats <a href="/advanced">Pico</a> 13</h2>
     <table width="95%%" style="text-align:center"><tr>
       <td>{}F<br/>{}V</td>
       <td>{}</td>
@@ -125,33 +179,21 @@ def core0_thread():
 </html>
 """
     
-    ssid = 'Imnot'
-    password = 'telling'
-
     print("core0_thread starting")
     
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    wlan.connect( ssid, password )
-
-# Wait for connect or fail
-    max_wait = 25
-    while max_wait > 0:
-      if wlan.status() < 0 or wlan.status() >= 3:
-        break
-      max_wait -= 1
-      print('waiting for connection...',max_wait)
-      sleep(1)
-  
-# Handle connection error
-    if wlan.status() != 3:
-      raise RuntimeError('network connection failed')
-    else:
-      print('connected')
-      status = wlan.ifconfig()
-      print( 'ip = ' + status[0] )
-      led.value(0)
-   
+    connectedEvent = asyncio.Event()
+    asyncio.create_task( connect_to_network( connectedEvent ) )
+    
+    while connectedEvent.is_set() == False:
+      await asyncio.sleep(0.5)
+      print("tick")
+      
+    # TODO: move the webpage server into an async function (per the async example)
+    # then also make "GET" calls to IFTTT to control the bamboo power
+    # https://maker.ifttt.com/trigger/Pico_thirsty/with/key/secretkey
+    # https://maker.ifttt.com/trigger/Pico_full/with/key/secretkey
+    # maybe some clock action? https://forums.raspberrypi.com/viewtopic.php?t=325598
+      
 # Open socket
     addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
     s = socket.socket()
@@ -315,7 +357,7 @@ def core0_thread():
         
 #     try:
 #   while True:
-# def core0_thread():
+# endof async def main():
 
 # The sound player thread
 # anytime counter is > 0 sound will play
@@ -342,15 +384,17 @@ def core1_thread():
     oscP1 = 225
     oscP2 = 3500
     tSlic = 0.04
+    
+    sleep(1)
 
     pwmOff = True
-    pwmA = PWM( Pin ( 22 ) ) # GP22, pin 29
+    pwmA = PWM( Pin ( GPIO_PWM_A ) ) # GP22, pin 29
     pwmA.freq( freq1 ) 
     pwmA.duty_u16( 0 )
-    pwmB = PWM( Pin ( 21 ) ) # GP21, pin 27
+    pwmB = PWM( Pin ( GPIO_PWM_B ) ) # GP21, pin 27
     pwmB.freq( freq2 ) 
     pwmB.duty_u16( 0 )
-    shdn = machine.Pin( 19, machine.Pin.OUT ) # GP19, pin 25
+    shdn = machine.Pin( GPIO_AMP_SHUTDOWN, machine.Pin.OUT ) # GP19, pin 25
     shdn.value(0)            # default to amplifier off
     
     print("core1_thread starting")
@@ -398,7 +442,12 @@ def core1_thread():
         gc.collect()
     # while True:
 # def core1_thread():
+
+
+try:
+  asyncio.run(main())
+
+finally:
+  asyncio.new_event_loop()
+
     
-# Launch both threads
-second_thread = _thread.start_new_thread(core1_thread, ())
-core0_thread()
