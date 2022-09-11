@@ -9,16 +9,18 @@
 # v1.2 deployed 2022-8-20
 # re-architecht web interface to async implementation
 # add thread safety with semaphore locks on thread shared variables
-# add NTP query to set 2040's internal realtime clock
-# add IFTTT POST capability, manually triggered for now
+# add NTP query to set internal RTC
+# add IFTTT POST actions, manually triggered for now
+# v1.2 deployed 2022-8-20
+# capture start time for display on advanced interface
+# add watchdog timer
 # v1.3 deployed 2022-9-11
-# add capture of start time for display on advanced screen
 #
 # imports used in both threads
 import _thread
 import gc
 import uasyncio as asyncio
-from machine import Pin, ADC, PWM
+from machine import Pin, ADC, PWM, WDT
 import network
 import socket
 import struct
@@ -73,10 +75,9 @@ html = """<!DOCTYPE html>
           <a href="/quiet">Quiet</a></td>
       <td bgcolor="{}">{}<br/>{}F {} sec<br/>{}V {}<br/>
                    {} {}dBm<font size="+2"><br/>Started {}<br/></font>{}</td>
-      <td>{}<a href="/light/rssi"><br/>LED RSSI</a><br/>
-            <a href="/full">Full</a><br/>
-            <a href="/thirsty">Thirsty</a><br/>
-            <a href="/vary">Vary</a></td>
+      <td><a href="/full">Full</a><br/><br/>
+          <a href="/thirsty">Thirsty</a><br/><br/>
+          <a href="/vary">Vary</a></td>
     </tr><tr>
       <td><br/><a href="/sound/01">1 sec</a></td>
       <td><br/><a href="/sound/05">5 secs</a></td>
@@ -440,7 +441,6 @@ async def serve_client( reader, writer ):
     global oscP2
     global tSlic
     global easyPage
-    global flashRssi
     global si1
     global si2
     global VERBOSE
@@ -565,28 +565,14 @@ async def serve_client( reader, writer ):
         led.value(1)
         # led.duty_u16( 65535 )
         stateis = "LED is ON"
-        baton.acquire()
-        flashRssi = False
-        baton.release()
         easyPage = False
  
       elif 0 == request.find('/light/off'):
         led.value(0)
         # led.duty_u16( 0 )
         stateis = "LED is OFF"
-        baton.acquire()
-        flashRssi = False
-        baton.release()
         easyPage = False
           
-      elif 0 == request.find('/light/rssi'):
-        # led.value(0)
-        stateis = "LED showing RSSI"
-        baton.acquire()
-        flashRssi = True
-        baton.release()
-        easyPage = False
-        
       elif 0 == request.find('/thirsty'):
         stateis = "Pico Thirsty"
         await pico_thirsty()
@@ -642,15 +628,10 @@ async def serve_client( reader, writer ):
                                        cmsg ) )
         # led.value(0) # LED is always off when using the easy interface
       else:
-        if flashRssi == True:
-          rmsg = "Showing"
-        else:
-          rmsg = "Not Showing"
-          
         writer.write( html.format( myIp, myIp, bgcolor, stateis,
                                    farenheit, counter,
                                    battV, cmsg, ssid, maxrssi,
-                                   startTime, time_string(), rmsg,
+                                   startTime, time_string(),
                                    freq1, freq2,
                                    fRng1, fRng2,
                                    oscP1, oscP2,
@@ -680,8 +661,6 @@ async def main():
     global si1
     global si2
     global easyPage
-    global flashRssi
-    global dutyCycle
     global wifi_connected
     global ws_launched
     global VERBOSE
@@ -703,8 +682,6 @@ async def main():
     oscP1 = 225
     oscP2 = 3500
     tSlic = 0.04
-    flashRssi = False
-    dutyCycle = 98
     baton.release()    
 
 # Set country code, opens legal WiFi channels
@@ -712,10 +689,16 @@ async def main():
             
     # Launch other thread
     second_thread = _thread.start_new_thread(core1_thread, ())
-    
+
+    # Have watchdog watch over the main loop, 30 second timeout
+    # if the main loop is running and core1 crashes, at least the
+    # main loop can be used to "exit" via the advanced web interface
+    # which should trigger the watchdog to reset 30 seconds later.
+    wdt = WDT(timeout=30000)  
     gcCycle = 2
     print("core0 main loop starting")
     while shutdown == False:
+      wdt.feed()  
       # connect to network, if not already done
       if wifi_connected == False:
         if wlan.status() == 3:
@@ -738,22 +721,6 @@ async def main():
       if ws_launched == False:
         await launch_webserver()  
         
-      if flashRssi == True:
-        # determine duty cycle for core1 thread to display
-        rssi = my_rssi( wlan.scan() )
-        baton.acquire()
-        dutyCycle = 5
-        if ( rssi > -100 ):
-          if ( rssi < -70 ):
-            # range -70 -> -100 has duty cycle 50 to 10
-            dutyCycle = 10 + 40.0*(rssi + 100)/30.0
-          elif ( rssi < -30 ):
-            # range -30 -> -70 has duty cycle 95 to 50 
-            dutyCycle = 50 + 45.0*(rssi + 70)/40.0
-          else: # over -30 go to 99 duty cycle
-            dutyCycle = 99
-        baton.release()
-        # led.duty_u16( dutyCycle * 65535 / 100.0 )
       await asyncio.sleep(1.0)
       
       # Here: implement the GET or POST calls to IFTTT when needed
@@ -765,6 +732,7 @@ async def main():
         if ( len( startTime ) < 4 ):
           print( 'getting startTime' )  
           await set_time()
+          print( 'started',time_string() )
         gc.collect()
         gcCycle = 60 # 1 minute between cycles
     # while shutdown == False:
@@ -791,8 +759,6 @@ def core1_thread():
     global oscP1
     global oscP2
     global tSlic
-    global flashRssi
-    global dutyCycle
     global VERBOSE
         
     baton.acquire()
@@ -805,8 +771,6 @@ def core1_thread():
     oscP1 = 225
     oscP2 = 3500
     tSlic = 0.04
-    flashRssi = False
-    dutyCycle = 98
     baton.release()
 
     sleep(1)
@@ -865,22 +829,7 @@ def core1_thread():
             targ = math.pi * -30.0 # keep targ in a reasonable range
             pwmOff = True
             
-          if flashRssi == False:
-            sleep( 0.2 )           # save a bit of power
-          else:
-            baton.acquire()
-            dc = dutyCycle
-            baton.release()
-            if ( dc < 1 ):
-              dc = 1
-            if ( dc > 99 ):
-              dc = 99
-            # better would be a hardware PWM, or maybe just a pin not shared with core 0
-            # something about this bogs down the system, I guess it's the led access
-            # led.value(1)
-            sleep( dc * 0.01 )
-            # led.value(0)
-            sleep( (100.0 - dc) * 0.01 )
+          sleep( 0.2 )             # save a bit of power
                   
         gcCycle1 = gcCycle1 - 1
         if ( gcCycle1 <= 0 ):
