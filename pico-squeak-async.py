@@ -9,6 +9,10 @@
 # v1.2 deployed 2022-8-20
 # re-architecht web interface to async implementation
 # add thread safety with semaphore locks on thread shared variables
+# add NTP query to set 2040's internal realtime clock
+# add IFTTT POST capability, manually triggered for now
+# v1.3 deployed 2022-9-11
+# add capture of start time for display on advanced screen
 #
 # imports used in both threads
 import _thread
@@ -23,15 +27,20 @@ import time
 ssid = 'ImNot'
 password = 'telling'
 wlan = network.WLAN(network.STA_IF)
+myIp = 'tempInit'
 
 # https://ifttt.com/maker_webhooks
 ifttt = "\r\nPOST /trigger/{}/with/key/secret HTTP/1.1\r\nHost: maker.ifttt.com\r\nConnection: close\r\n\r\n"
 
 easyHtml = """<!DOCTYPE html>
 <html>
-  <head><title>MangoCats Pico 13</title></head>
-  <body><center><font size="+6"><h2>MangoCats <a href="/advanced">Pico</a> 13</h2>
+  <head><title>Squeaker {}</title></head>
+  <body><center><font size="+6">
     <table width="95%%" style="text-align:center"><tr>
+      <td></td>
+      <td><h2><a href="/advanced">Squeaker</a> {}</h2></td>
+      <td></td>
+    </tr><tr>
       <td>{}F<br/>{}V</td>
       <td>{}<br/><a href="/vary">Vary</a><br/>{}</td>
       <td bgcolor="{}">{}s<br/>{}</td>
@@ -50,12 +59,20 @@ easyHtml = """<!DOCTYPE html>
 
 html = """<!DOCTYPE html>
 <html>
-  <head><title>MangoCats Pico 13</title></head>
-  <body><center><font size="+3"><h2>MangoCats <a href="/">Pico</a> 13</h2>
+  <head><title>Squeaker {}</title></head>
+  <body><center><font size="+3">
     <table width="95%%" style="text-align:center"><tr>
-      <td><a href="/light/on">LED ON</a><br/><br/>
-          <a href="/light/off">LED OFF</a></td>
-      <td bgcolor="{}">{}<br/>{}F {} sec<br/>{}V {}<br/>{} {}dBm<br/>{}</td>
+      <td></td>
+      <td><h2><a href="/">Squeaker</a> {}</h2></td>
+      <td></td>
+    </tr><tr>
+      <td><a href="/light/on">LED ON</a><br/>
+          <a href="/light/off">LED OFF</a><br/>
+          <a href="/settime">Set Time</a><br/>
+          <a href="/verbose">Verbose</a><br/>
+          <a href="/quiet">Quiet</a></td>
+      <td bgcolor="{}">{}<br/>{}F {} sec<br/>{}V {}<br/>
+                   {} {}dBm<font size="+2"><br/>Started {}<br/></font>{}</td>
       <td>{}<a href="/light/rssi"><br/>LED RSSI</a><br/>
             <a href="/full">Full</a><br/>
             <a href="/thirsty">Thirsty</a><br/>
@@ -212,10 +229,16 @@ chg_pin = machine.Pin(GPIO_CHARGING, machine.Pin.IN)
 # NTP stuff Timezone set UTC -4
 NTP_DELTA = 2208988800 + 3600*4
 host = "us.pool.ntp.org" # "time.nist.gov" # "pool.ntp.org"
-NTP_VERBOSE = False
+global startTime
+startTime = "-"
+
+global VERBOSE
+VERBOSE = False
 
 async def set_time():
-    if NTP_VERBOSE:
+    global startTime
+    global VERBOSE
+    if VERBOSE:
       print( 'set_time()' )
       
     NTP_QUERY = bytearray(48)
@@ -223,7 +246,7 @@ async def set_time():
     gotReply = False
     
     try:
-      if NTP_VERBOSE:
+      if VERBOSE:
         print('set_time() blocking query of', host )
       addr = socket.getaddrinfo(host, 123)[0][-1]
       s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -231,7 +254,7 @@ async def set_time():
       res = s.sendto(NTP_QUERY, addr)
       msg = s.recv(48)
       gotReply = True
-      if NTP_VERBOSE:
+      if VERBOSE:
         print('set_time() blocking msg received:',msg)
            
     except Exception as e:
@@ -240,7 +263,7 @@ async def set_time():
     finally:
       try:
         s.close()
-        if NTP_VERBOSE:
+        if VERBOSE:
           print( 'set_time() blocking connection closed' )
       except Exception as e:
         print( "socket close attempt failed: {}".format( e ) )
@@ -248,11 +271,13 @@ async def set_time():
     if gotReply:
       try:
         val = struct.unpack("!I", msg[40:44])[0]
-        if NTP_VERBOSE:
+        if VERBOSE:
           print( 'set_time() unpacked val',val )
         tm = time.gmtime( val - NTP_DELTA )
         machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3], tm[4], tm[5], 0))
-        if NTP_VERBOSE:
+        if ( len(startTime) < 4 ):
+          startTime = time_string()
+        if VERBOSE:
           print( 'set_time() time set:', time_string() )
       except Exception as e:
         print( "Exception in NTP reply interpretation {}".format( e ) )
@@ -269,17 +294,18 @@ def time_string():
     return ts
 
 async def pico_thirsty():
-    if NTP_VERBOSE:
+    global VERBOSE
+    if VERBOSE:
       print( 'pico_thirsty()' )
     try:
       reader, writer = await asyncio.open_connection("maker.ifttt.com", 80)
-      if NTP_VERBOSE:
+      if VERBOSE:
         print( 'pico_thirsty() non blocking connection established' )
       req = ifttt.format( "Pico_thirsty" )
       writer.write(req.encode("utf8"))
       msg = await reader.read(1024)
       gotReply = True
-      if NTP_VERBOSE:
+      if VERBOSE:
         print( 'pico_thirsty() read reply:', msg )
 
     except Exception as e:
@@ -289,24 +315,25 @@ async def pico_thirsty():
       try:
         writer.close()
         await writer.wait_closed()
-        if NTP_VERBOSE:
+        if VERBOSE:
           print( 'pico_thirsty() connection closed' )
       except Exception as e:
         print( "writer close attempt failed: {}".format( e ) )
 # endof async def pico_thirsty():
 
 async def pico_full():
-    if NTP_VERBOSE:
+    global VERBOSE
+    if VERBOSE:
       print( 'pico_full()' )
     try:
       reader, writer = await asyncio.open_connection( "maker.ifttt.com", 80 )
-      if NTP_VERBOSE:
+      if VERBOSE:
         print( 'pico_full() non blocking connection established' )
       req = ifttt.format( "Pico_full" )
       writer.write(req.encode("utf8"))
       msg = await reader.read(1024)
       gotReply = True
-      if NTP_VERBOSE:
+      if VERBOSE:
         print( 'pico_full() read reply:', msg )
 
     except Exception as e:
@@ -316,7 +343,7 @@ async def pico_full():
       try:
         writer.close()
         await writer.wait_closed()
-        if NTP_VERBOSE:
+        if VERBOSE:
           print( 'pico_full() connection closed' )
       except Exception as e:
         print( "writer close attempt failed: {}".format( e ) )
@@ -333,6 +360,7 @@ async def launch_webserver():
       
 async def connect_to_network():
     global wifi_connected
+    global myIp
     
 # LED on while attempting connection
     led.value(1)
@@ -364,6 +392,10 @@ async def connect_to_network():
       print('connected to',ssid)
       status = wlan.ifconfig()
       print( 'ip = ' + status[0] )
+      try: 
+        myIp = status[0].split('.')[3]
+      except:
+        myIp = status[0]
       wifi_connected = True
       await launch_webserver()
 
@@ -411,7 +443,10 @@ async def serve_client( reader, writer ):
     global flashRssi
     global si1
     global si2
-    
+    global VERBOSE
+    global myIp
+    global startTime
+
     # print("Client connected",si1,si2)
     
     request_line = await reader.readline()
@@ -488,6 +523,18 @@ async def serve_client( reader, writer ):
         stateis = "tSlic %sms" % (tSlic * 1000.0)
         easyPage = False
           
+      elif 0 == request.find('/settime'):
+        await set_time()
+        stateis = "Time Set"
+        
+      elif 0 == request.find('/verbose'):
+        VERBOSE = True
+        stateis = "Verbose"
+        
+      elif 0 == request.find('/quiet'):
+        VERBOSE = False
+        stateis = "Quiet"
+        
       elif 0 == request.find('/vary'):
         si1 = si1 + 3
         si2 = si2 + 5
@@ -588,7 +635,7 @@ async def serve_client( reader, writer ):
 # Send the updated GUI to the browser
       writer.write('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
       if easyPage == True:
-        writer.write( easyHtml.format( farenheit,
+        writer.write( easyHtml.format( myIp, myIp, farenheit,
                                        battV,
                                        stateis, time_string(),
                                        bgcolor, cnt,
@@ -600,10 +647,10 @@ async def serve_client( reader, writer ):
         else:
           rmsg = "Not Showing"
           
-        writer.write( html.format( bgcolor, stateis,
+        writer.write( html.format( myIp, myIp, bgcolor, stateis,
                                    farenheit, counter,
-                                   battV, cmsg,
-                                   ssid, maxrssi, time_string(), rmsg,
+                                   battV, cmsg, ssid, maxrssi,
+                                   startTime, time_string(), rmsg,
                                    freq1, freq2,
                                    fRng1, fRng2,
                                    oscP1, oscP2,
@@ -620,7 +667,7 @@ async def main():
 
     import socket
     from rp2 import country
-    
+    global startTime
     global counter
     global shutdown
     global freq1
@@ -637,6 +684,9 @@ async def main():
     global dutyCycle
     global wifi_connected
     global ws_launched
+    global VERBOSE
+    global myIp
+    
     wifi_connected = False
     ws_launched = False
     easyPage = True
@@ -663,7 +713,7 @@ async def main():
     # Launch other thread
     second_thread = _thread.start_new_thread(core1_thread, ())
     
-    gcCycle = 1
+    gcCycle = 2
     print("core0 main loop starting")
     while shutdown == False:
       # connect to network, if not already done
@@ -672,6 +722,10 @@ async def main():
           print('already connected to', str(wlan.config('ssid')) )
           status = wlan.ifconfig()
           print( 'ip = ' + status[0] )
+          try: 
+            myIp = status[0].split('.')[3]
+          except:
+            myIp = status[0]
           wifi_connected = True
         while wlan.status() != 3:
           await connect_to_network()
@@ -706,9 +760,11 @@ async def main():
       
       gcCycle = gcCycle - 1
       if ( gcCycle <= 0 ):
-        # print( 'core0 Status:',wlan.status(),'RSSI:',my_rssi( wlan.scan() ) )
-        print( 'doing gc0 Status:',wlan.status(),'RSSI:',my_rssi( wlan.scan() ) )
-        # await set_time()
+        if VERBOSE:
+          print( 'doing gc0 Status:',wlan.status(),'RSSI:',my_rssi( wlan.scan() ) )
+        if ( len( startTime ) < 4 ):
+          print( 'getting startTime' )  
+          await set_time()
         gc.collect()
         gcCycle = 60 # 1 minute between cycles
     # while shutdown == False:
@@ -737,6 +793,7 @@ def core1_thread():
     global tSlic
     global flashRssi
     global dutyCycle
+    global VERBOSE
         
     baton.acquire()
     counter  = 0
@@ -827,7 +884,8 @@ def core1_thread():
                   
         gcCycle1 = gcCycle1 - 1
         if ( gcCycle1 <= 0 ):
-          print( 'doing gc1' )
+          if VERBOSE:
+            print( 'doing gc1' )
           gc.collect()
           gcCycle1 = 300
     # while shutdown == False:
