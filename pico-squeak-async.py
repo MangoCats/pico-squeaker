@@ -15,12 +15,17 @@
 # capture start time for display on advanced interface
 # add watchdog timer
 # v1.3 deployed 2022-9-11
+# remove watchdog timer, it's not helping and may be making debug/devel more miserable
+# remove potential infinite loop
+# add rest period after serving a webpage
+# drain writer before closing IFTTT writer
+# v1.4 deployed 2022-9-13
 #
 # imports used in both threads
 import _thread
 import gc
 import uasyncio as asyncio
-from machine import Pin, ADC, PWM, WDT
+from machine import Pin, ADC, PWM
 import network
 import socket
 import struct
@@ -30,9 +35,10 @@ ssid = 'ImNot'
 password = 'telling'
 wlan = network.WLAN(network.STA_IF)
 myIp = 'tempInit'
+iftttSecret = 'secret'
 
 # https://ifttt.com/maker_webhooks
-ifttt = "\r\nPOST /trigger/{}/with/key/secret HTTP/1.1\r\nHost: maker.ifttt.com\r\nConnection: close\r\n\r\n"
+ifttt = "\r\nPOST /trigger/{}/with/key/{} HTTP/1.1\r\nHost: maker.ifttt.com\r\nConnection: close\r\n\r\n"
 
 easyHtml = """<!DOCTYPE html>
 <html>
@@ -236,7 +242,9 @@ startTime = "-"
 global VERBOSE
 VERBOSE = False
 
-async def set_time():
+def set_time():
+    import socket
+    
     global startTime
     global VERBOSE
     if VERBOSE:
@@ -282,7 +290,7 @@ async def set_time():
           print( 'set_time() time set:', time_string() )
       except Exception as e:
         print( "Exception in NTP reply interpretation {}".format( e ) )
-# endof async def set_time():
+# endof def set_time():
 
 def time_string():
     t = time.localtime()
@@ -302,10 +310,9 @@ async def pico_thirsty():
       reader, writer = await asyncio.open_connection("maker.ifttt.com", 80)
       if VERBOSE:
         print( 'pico_thirsty() non blocking connection established' )
-      req = ifttt.format( "Pico_thirsty" )
+      req = ifttt.format( "Pico_thirsty", iftttSecret )
       writer.write(req.encode("utf8"))
       msg = await reader.read(1024)
-      gotReply = True
       if VERBOSE:
         print( 'pico_thirsty() read reply:', msg )
 
@@ -314,7 +321,7 @@ async def pico_thirsty():
     
     finally:
       try:
-        writer.close()
+        await writer.drain()
         await writer.wait_closed()
         if VERBOSE:
           print( 'pico_thirsty() connection closed' )
@@ -330,10 +337,9 @@ async def pico_full():
       reader, writer = await asyncio.open_connection( "maker.ifttt.com", 80 )
       if VERBOSE:
         print( 'pico_full() non blocking connection established' )
-      req = ifttt.format( "Pico_full" )
+      req = ifttt.format( "Pico_full", iftttSecret )
       writer.write(req.encode("utf8"))
       msg = await reader.read(1024)
-      gotReply = True
       if VERBOSE:
         print( 'pico_full() read reply:', msg )
 
@@ -342,7 +348,7 @@ async def pico_full():
     
     finally:
       try:
-        writer.close()
+        await writer.drain()
         await writer.wait_closed()
         if VERBOSE:
           print( 'pico_full() connection closed' )
@@ -350,34 +356,70 @@ async def pico_full():
         print( "writer close attempt failed: {}".format( e ) )
 # endof async def pico_full():
 
-async def launch_webserver():
+def webserver_done():
     global ws_launched
+    ws_launched = False
+    print( "webserver done" )
+    
+def launch_webserver():
+    global ws_launched
+    global serverOb
     if wlan.status() != 3:
       print( "Will not launch webserver in wlan.status:", wlan.status() )
-    else:
-      asyncio.create_task( asyncio.start_server(serve_client, "0.0.0.0", 80) )
+    else:  
+      serverOb = asyncio.start_server(serve_client, "0.0.0.0", 80)
+      asyncio.create_task( serverOb )
       ws_launched = True
       print( "webserver launched" )
-      
+# endof def launch_webserver():
+
+# Check first for an existing connection before
+# going into the main connect_to_network process
+async def connect_wifi():
+    global wifi_connected
+    
+    if wlan.status() == 3:
+      print('already connected to', str(wlan.config('ssid')) )
+      get_our_ip()
+      wifi_connected = True
+        
+    while wlan.status() != 3:
+      await connect_to_network()
+
+      if wlan.status() != 3:
+        print("Status:", wlan.status(), " Resting.")
+        await asyncio.sleep(5.0)
+# endof async def connect_wifi():
+    
+def get_our_ip():
+    global myIp
+    
+    status = wlan.ifconfig()
+    print( 'ip = ' + status[0] )
+    try: 
+      myIp = status[0].split('.')[3]
+    except:
+      myIp = status[0]
+#endof def get_our_ip():
+
+            
 async def connect_to_network():
     global wifi_connected
-    global myIp
     
 # LED on while attempting connection
     led.value(1)
-    # led.duty_u16( 65535 )
 
     if wlan.status() == 3:
       print( "wifi already connected" )
     else:
-      print( "connecting wifi to", ssid )
+      print( "connecting to", ssid )
       
       wlan.active(True)
-      wlan.config(pm = 0xa11140) # disable low power mode
+#      wlan.config(pm = 0xa11140) # disable low power mode default=0xa11142 aggressive_pm=0xa11c82 performance_pm=0x111022
       wlan.connect( ssid, password )
 
 # Wait for connect or fail
-      max_wait = 25
+      max_wait = 20
       while max_wait > 0:
         if wlan.status() < 0 or wlan.status() >= 3:
           break
@@ -391,19 +433,13 @@ async def connect_to_network():
       print('status code',wlan.status())
     else:
       print('connected to',ssid)
-      status = wlan.ifconfig()
-      print( 'ip = ' + status[0] )
-      try: 
-        myIp = status[0].split('.')[3]
-      except:
-        myIp = status[0]
+      get_our_ip()
       wifi_connected = True
-      await launch_webserver()
+      launch_webserver()
 
 # Connection attempt is over, light out.
     await asyncio.sleep(1)
     led.value(0)
-    # led.duty_u16( 0 )
 
 # endof async def connect_to_network():
 
@@ -428,7 +464,7 @@ def my_rssi( apl ):
   else:
     print( "apl is not a tuple or list?", apl )
   return maxrssi
-#endof my_rssi
+#endof def my_rssi
 
 async def serve_client( reader, writer ):
     global counter
@@ -444,6 +480,7 @@ async def serve_client( reader, writer ):
     global si1
     global si2
     global VERBOSE
+    global gcCycle
     global myIp
     global startTime
 
@@ -452,9 +489,11 @@ async def serve_client( reader, writer ):
     request_line = await reader.readline()
     # print("Request:", request_line)
 # We are not interested in HTTP request headers, skip them
-    header = b"."
-    while header != b"\r\n":
+    header = b""
+    ticksStart = time.ticks_ms();
+    while ( header != b"\r\n" ) and ( time.ticks_diff(time.ticks_ms(), ticksStart) < 250 ):
       header = await reader.readline()
+      await asyncio.sleep(0.0001)
       # print('Header:', str(header) )
       
     request = str(request_line[4:17])
@@ -524,7 +563,7 @@ async def serve_client( reader, writer ):
         easyPage = False
           
       elif 0 == request.find('/settime'):
-        await set_time()
+        set_time()
         stateis = "Time Set"
         
       elif 0 == request.find('/verbose'):
@@ -590,13 +629,13 @@ async def serve_client( reader, writer ):
         # easyPage is unchanged
 
 # take a temperature reading
-      reading = sensor_temp.read_u16() * conversion_factor 
+      reading     = sensor_temp.read_u16() * conversion_factor 
       temperature = 27.0 - (reading - 0.706)/0.001721
-      farenheit = temperature * 9.0 / 5.0 + 32.0
+      farenheit   = temperature * 1.8 + 32.0
           
 # read the battery voltage          
       reading = batt_adc.read_u16() * 3.3 / 32767.0
-      battV = reading * (150.0+68.0) / 150.0
+      battV   = reading * (150.0+68.0) / 150.0
 
 # Read strongest connection to ssid, but only on advanced page
       maxrssi = -200
@@ -639,16 +678,15 @@ async def serve_client( reader, writer ):
     
     await writer.drain()
     await writer.wait_closed()
+    await asyncio.sleep(0.75)
+    gcCycle = gcCycle - 15
 #    print("Disconnected", request )       
 # endof async def serve_interface():
 
 # The Web Server Thread - turns GET requests into actions onboard
+# also issues queries to an NTP server and POSTs to IFTTT
 async def main():
     print("core0_thread starting")
-
-    import socket
-    from rp2 import country
-    global startTime
     global counter
     global shutdown
     global freq1
@@ -658,17 +696,22 @@ async def main():
     global oscP1
     global oscP2
     global tSlic
-    global si1
-    global si2
-    global easyPage
     global wifi_connected
     global ws_launched
+    global serverOb
     global VERBOSE
+    global easyPage
+    global startTime
     global myIp
+    global si1
+    global si2
+    global gcCycle
     
     wifi_connected = False
     ws_launched = False
     easyPage = True
+    startTime = "-"
+    myIp = "."
     si1 = 1
     si2 = 2
 
@@ -685,61 +728,47 @@ async def main():
     baton.release()    
 
 # Set country code, opens legal WiFi channels
+    from rp2 import country
     country('US')
             
-    # Launch other thread
+# Launch the sound maker thread
     second_thread = _thread.start_new_thread(core1_thread, ())
 
-    # Have watchdog watch over the main loop, 30 second timeout
-    # if the main loop is running and core1 crashes, at least the
-    # main loop can be used to "exit" via the advanced web interface
-    # which should trigger the watchdog to reset 30 seconds later.
-    wdt = WDT(timeout=30000)  
     gcCycle = 2
+    await asyncio.sleep(0.1)
     print("core0 main loop starting")
     while shutdown == False:
-      wdt.feed()  
-      # connect to network, if not already done
+    
       if wifi_connected == False:
-        if wlan.status() == 3:
-          print('already connected to', str(wlan.config('ssid')) )
-          status = wlan.ifconfig()
-          print( 'ip = ' + status[0] )
-          try: 
-            myIp = status[0].split('.')[3]
-          except:
-            myIp = status[0]
-          wifi_connected = True
-        while wlan.status() != 3:
-          await connect_to_network()
-
-          if wlan.status() != 3:
-            print("Status:", wlan.status(), " Resting.")
-            await asyncio.sleep(5.0)
-      # endif wifi_connected == False
+        await connect_wifi()
       
       if ws_launched == False:
-        await launch_webserver()  
-        
+        if wlan.status() == 3:
+          launch_webserver()
+            
       await asyncio.sleep(1.0)
       
-      # Here: implement the GET or POST calls to IFTTT when needed
+      # Here: implement automatic POST calls to IFTTT when needed (to charge batteries)
       
       gcCycle = gcCycle - 1
       if ( gcCycle <= 0 ):
         if VERBOSE:
           print( 'doing gc0 Status:',wlan.status(),'RSSI:',my_rssi( wlan.scan() ) )
         if ( len( startTime ) < 4 ):
-          print( 'getting startTime' )  
-          await set_time()
+          print( 'getting startTime' )
+          set_time()
           print( 'started',time_string() )
+        # https://docs.micropython.org/en/latest/reference/constrained.html#control-of-garbage-collection
         gc.collect()
+        gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         gcCycle = 60 # 1 minute between cycles
     # while shutdown == False:
     
-    print("core0_thread exiting")
-    await asyncio.sleep(2.0) # let core1 exit first
-    
+    try:
+      serverOb.close()
+    finally:
+      print("core0_thread exiting")
+      await asyncio.sleep(2.0) # let core1 exit first
 # endof async def main():
 
 # The sound player thread
@@ -773,8 +802,6 @@ def core1_thread():
     tSlic = 0.04
     baton.release()
 
-    sleep(1)
-
     pwmOff = True
     pwmA = PWM( Pin ( GPIO_PWM_A ) ) # GP22, pin 29
     pwmA.freq( freq1 ) 
@@ -784,8 +811,10 @@ def core1_thread():
     pwmB.duty_u16( 0 )
     shdn = machine.Pin( GPIO_AMP_SHUTDOWN, machine.Pin.OUT ) # GP19, pin 25
     shdn.value(0)            # default to amplifier off
-    
-    gcCycle1 = 75
+
+    sleep(1)
+
+#    gcCycle1 = 75
     targ = math.pi * -30.0
     print("core1 main loop starting")
     while shutdown == False:
@@ -797,11 +826,13 @@ def core1_thread():
             pwmA.duty_u16( 32768 )   # duty 50% (65535/2)
             pwmB.duty_u16( 32768 )
             shdn.on()                # amplifier on
-            # print("Sound on")
+            if VERBOSE:
+              print("Sound on")
             pwmOff = False
             
-          baton.acquire()  
-          # print( counter )  
+          baton.acquire()
+          if VERBOSE:
+            print( counter )  
           counter -= 1
           oscC1 = 1000.0 / float(oscP1)  # convert the modulation periods (in ms) to coefficients
           oscC2 = 1000.0 / float(oscP2)
@@ -825,18 +856,19 @@ def core1_thread():
             pwmA.duty_u16( 0 )     # stop oscillation
             pwmB.duty_u16( 0 )
             shdn.off()             # amplifier off
-            # print("Sound off")
+            if VERBOSE:
+              print("Sound off")
             targ = math.pi * -30.0 # keep targ in a reasonable range
             pwmOff = True
             
           sleep( 0.2 )             # save a bit of power
                   
-        gcCycle1 = gcCycle1 - 1
-        if ( gcCycle1 <= 0 ):
-          if VERBOSE:
-            print( 'doing gc1' )
-          gc.collect()
-          gcCycle1 = 300
+        #gcCycle1 = gcCycle1 - 1
+        #if ( gcCycle1 <= 0 ):
+        #  if VERBOSE:
+        #    print( 'doing gc1' )
+        #  gc.collect()
+        #  gcCycle1 = 300
     # while shutdown == False:
     
     pwmA.deinit()
