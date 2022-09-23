@@ -21,6 +21,9 @@
 # drain writer before closing IFTTT writer
 # v1.4 deployed 2022-9-13
 # dropping threads to put everything in the async event loop
+# adding "charge complete" status pin on GP18 - charge status from MCP73833 seems... not helpful.
+# adding LC709203F I2C support for battery status monitoring
+# v1.5 deployed 2022-9-22 to the solar powered box
 #
 # imports used everywhere
 import gc
@@ -33,9 +36,34 @@ import time
 
 ssid = 'ImNot'
 password = 'telling'
+iftttSecret = 'secret'
 wlan = network.WLAN(network.STA_IF)
 myIp = 'tempInit'
-iftttSecret = 'secret'
+
+# GPIO assignments (GPIO #s, not pin #s)
+GPIO_BATT_VOLTAGE    = const(27)
+GPIO_PWM_A           = const(22)
+GPIO_PWM_B           = const(21)
+GPIO_CHARGING        = const(20)
+GPIO_AMP_SHUTDOWN    = const(19)
+GPIO_CHARGE_COMPLETE = const(18)
+GPIO_STARTSTOP_LED   = const(26)
+GPIO_TEMP_SENSOR     = const( 4)
+GPIO_I2C_SDA         = const( 2)
+GPIO_I2C_SCL         = const( 3)
+I2C_DEVICE           = const( 1)
+
+LC709203F_I2CADDR_DEFAULT     = const(0x0B)
+LC709203F_CMD_ICVERSION       = const(0x11)
+LC709203F_CMD_BATTPROF        = const(0x12)
+LC709203F_CMD_POWERMODE       = const(0x15)
+LC709203F_CMD_APA             = const(0x0B)
+LC709203F_CMD_INITRSOC        = const(0x07)
+LC709203F_CMD_CELLVOLTAGE     = const(0x09)
+LC709203F_CMD_CELLITE         = const(0x0F)
+LC709203F_CMD_CELLTEMPERATURE = const(0x08)
+LC709203F_CMD_THERMISTORB     = const(0x06)
+LC709203F_CMD_STATUSBIT       = const(0x16)
 
 # https://ifttt.com/maker_webhooks
 ifttt = "\r\nPOST /trigger/{}/with/key/{} HTTP/1.1\r\nHost: maker.ifttt.com\r\nConnection: close\r\n\r\n"
@@ -74,8 +102,8 @@ html = """<!DOCTYPE html>
       <td><h2><a href="/">Squeaker</a> {}</h2></td>
       <td></td>
     </tr><tr>
-      <td><a href="/light/on">LED ON</a><br/>
-          <a href="/light/off">LED OFF</a><br/>
+      <td><a href="/light/on">LED</a> <a href="/light/bon">ON</a><br/>
+          <a href="/light/off">LED</a> <a href="/light/boff">OFF</a><br/>
           <a href="/settime">Set Time</a><br/>
           <a href="/verbose">Verbose</a><br/>
           <a href="/quiet">Quiet</a></td>
@@ -211,16 +239,9 @@ sounds = [sound0,sound1,sound2,sound3,sound4,sound6,sound6,sound7,
 months = [ "Jan", "Feb", "Mar", "Apr", "May", "Jun",
            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" ]
 
-# GPIO assignments (GPIO #s, not pin #s)
-GPIO_BATT_VOLTAGE=27
-GPIO_PWM_A=22
-GPIO_PWM_B=21
-GPIO_CHARGING=20
-GPIO_AMP_SHUTDOWN=19
-GPIO_TEMP_SENSOR=4
-
 # Select the Pico W onboard LED (which is apparently not PWM capable)
-led = machine.Pin("LED", machine.Pin.OUT)
+led   = machine.Pin(             "LED", machine.Pin.OUT)
+ssled = machine.Pin(GPIO_STARTSTOP_LED, machine.Pin.OUT)
 
 # Temperature sensor and Battery Voltage
 sensor_temp = ADC(GPIO_TEMP_SENSOR)
@@ -228,7 +249,8 @@ batt_adc    = machine.ADC(GPIO_BATT_VOLTAGE)
 conversion_factor = 3.3 / 65535.0
 
 # Charging indicator from bq24074
-chg_pin = machine.Pin(GPIO_CHARGING, machine.Pin.IN)
+chg_pin = machine.Pin(GPIO_CHARGING       , machine.Pin.IN)
+chc_pin = machine.Pin(GPIO_CHARGE_COMPLETE, machine.Pin.IN)
 
 # NTP stuff Timezone set UTC -4
 NTP_DELTA = 2208988800 + 3600*4
@@ -403,9 +425,10 @@ def get_our_ip():
 async def connect_to_network():
     global wifi_connected
     
-# LED on while attempting connection
+# LEDs on while attempting connection
     led.value(1)
-
+    ssled.value(1)
+    
     if wlan.status() == 3:
       print( "wifi already connected" )
     else:
@@ -434,9 +457,10 @@ async def connect_to_network():
       wifi_connected = True
       launch_webserver()
 
-# Connection attempt is over, light out.
+# Connection attempt is over, lights out.
     await asyncio.sleep(1)
     led.value(0)
+    ssled.value(0)
 
 # endof async def connect_to_network():
 
@@ -480,12 +504,14 @@ async def serve_client( reader, writer ):
     global gcCycle
     global myIp
     global startTime
+    global i2c
 
-    # print("Client connected",si1,si2)
+    if VERBOSE:
+      print("Client connected")
     
     request_line = await reader.readline()
     # print("Request:", request_line)
-# We are not interested in HTTP request headers, skip them
+# We are not interested in HTTP request headers, read and ignore them
     header = b""
     ticksStart = time.ticks_ms();
     while ( header != b"\r\n" ) and ( time.ticks_diff(time.ticks_ms(), ticksStart) < 250 ):
@@ -576,12 +602,12 @@ async def serve_client( reader, writer ):
         
       elif 0 == request.find('/exit'):
         stateis = "Exiting."
+        ssled.value(1)
         shutdown = True
         easyPage = True
             
       elif 0 == request.find('/light/on'):
         led.value(1)
-        # led.duty_u16( 65535 )
         stateis = "LED is ON"
         easyPage = False
  
@@ -589,6 +615,17 @@ async def serve_client( reader, writer ):
         led.value(0)
         # led.duty_u16( 0 )
         stateis = "LED is OFF"
+        easyPage = False
+          
+      elif 0 == request.find('/light/bon'):
+        ssled.value(1)
+        stateis = "Button LED is ON"
+        easyPage = False
+
+      elif 0 == request.find('/light/boff'):
+        ssled.value(0)
+        # led.duty_u16( 0 )
+        stateis = "Button LED is OFF"
         easyPage = False
           
       elif 0 == request.find('/thirsty'):
@@ -621,13 +658,23 @@ async def serve_client( reader, writer ):
       if easyPage == False:
         maxrssi = my_rssi( wlan.scan() )
             
-# Read the charging pin from the bq24074        
+# Read the charging status pins from the MCP73833        
+#      if chg_pin.value() == True:
+#        cmsg = "Charging"
+#      else:
+#        cmsg = "Not Charging"
+#        
+#      if chc_pin.value() == True:
+#        cmsg = "Charge Complete"
+
+# bq24074 solar charger
       if chg_pin.value() == True:
-        cmsg = "Not Charging"
-      else:
         cmsg = "Charging"
-        
-# Get the sound timer remaining count, safely        
+      else:
+        cmsg = "Not Charging"
+
+
+# Get the sound timer remaining count
       cnt = counter
       if ( cnt > 0 ):
         bgcolor = "#CCCCCC"
@@ -642,7 +689,6 @@ async def serve_client( reader, writer ):
                                        stateis, time_string(),
                                        bgcolor, cnt,
                                        cmsg ) )
-        # led.value(0) # LED is always off when using the easy interface
       else:
         writer.write( html.format( myIp, myIp, bgcolor, stateis,
                                    farenheit, counter,
@@ -657,8 +703,82 @@ async def serve_client( reader, writer ):
     await writer.wait_closed()
     await asyncio.sleep(0.75)
     gcCycle = gcCycle - 15
-#    print("Disconnected", request )       
+    if VERBOSE:
+      print("Disconnected", request )       
 # endof async def serve_interface():
+
+def generate_crc( data ):
+# 8-bit CRC algorithm for checking data
+    crc = 0x00
+    # calculates 8-Bit checksum with given polynomial
+    for byte in data:
+      crc ^= byte
+      for _ in range(8):
+        if crc & 0x80:
+          crc = (crc << 1) ^ 0x07
+        else:
+          crc <<= 1
+        crc &= 0xFF
+    return crc
+
+def write_word( command, data ):
+    global i2c
+    
+    buf[0] = LC709203F_I2CADDR_DEFAULT * 2  # write byte
+    buf[1] = command  # command / register
+    buf[2] = data & 0xFF
+    buf[3] = (data >> 8) & 0xFF
+    buf[4] = generate_crc( buf[0:4] )
+    i2c.write(self._buf[1:5])
+    
+# Write bytes to the specified register.
+def reg_write( reg, data ):
+    global i2c
+    
+    # Construct message
+    msg = bytearray()
+    msg.append(data)
+    
+    # Write out message to register
+    i2c.writeto_mem(LC709203F_I2CADDR, reg, msg)
+    
+# Read byte(s) from specified register. If nbytes > 1, read from consecutive registers.
+def reg_read( reg, nbytes=1 ):
+    global i2c
+    
+    # Check to make sure caller is asking for 1 or more bytes
+    if nbytes < 1:
+      return bytearray()
+    
+    # Request data from specified register(s) over I2C
+    data = i2c.readfrom_mem(LC709203F_I2CADDR, reg, nbytes)
+    
+    return data
+
+
+# look for the battery monitor, initialize it if it is connected
+def init_LC709203F():
+    global i2c
+    global LC709203F_present
+
+    LC709203F_present = False
+    
+# Create I2C object
+    i2c = machine.I2C(I2C_DEVICE, scl=machine.Pin(GPIO_I2C_SCL), sda=machine.Pin(GPIO_I2C_SDA))
+
+# Print out any addresses found
+    devices = i2c.scan()
+
+    if devices:
+      for d in devices:
+        print( "i2c device @", hex(d) )
+        if d == LC709203F_I2CADDR:
+          LC709203F_present = True
+          write_word(LC709203F_CMD_APA, 0x36)
+    else: # if devices:
+      print( "no i2c devices found" )  
+
+# endof def init_LC709203F()    
 
 # The Web Server Thread - turns GET requests into actions onboard
 # also issues queries to an NTP server and POSTs to IFTTT
@@ -683,7 +803,10 @@ async def main():
     global si1
     global si2
     global gcCycle
+    global i2c
+    global LC709203F_present
     
+    LC709203F_present = False
     wifi_connected = False
     ws_launched = False
     easyPage = True
@@ -705,7 +828,10 @@ async def main():
 # Set country code, opens legal WiFi channels
     from rp2 import country
     country('US')
-            
+    
+# look for the i2c battery monitor    
+    init_LC709203F()
+    
 # Launch the sound maker
     asyncio.create_task( sound_player() )
 
@@ -744,6 +870,7 @@ async def main():
     finally:
       print("main() exiting")
       await asyncio.sleep(2.0) # let core1 exit first
+      ssled.value(0)
 # endof async def main():
 
 # The sound player
@@ -787,7 +914,6 @@ async def sound_player():
 
     await asyncio.sleep(1)
 
-#    gcCycle1 = 75
     targ = math.pi * -30.0
     print("sound_player() loop starting")
     while shutdown == False:
@@ -832,12 +958,6 @@ async def sound_player():
             
           await asyncio.sleep( 0.2 )             # save a bit of power
                   
-        #gcCycle1 = gcCycle1 - 1
-        #if ( gcCycle1 <= 0 ):
-        #  if VERBOSE:
-        #    print( 'doing gc1' )
-        #  gc.collect()
-        #  gcCycle1 = 300
     # while shutdown == False:
     
     pwmA.deinit()
