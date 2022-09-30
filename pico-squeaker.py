@@ -24,6 +24,10 @@
 # adding "charge complete" status pin on GP18 - charge status from MCP73833 seems... not helpful.
 # adding LC709203F I2C support for battery status monitoring
 # v1.5 deployed 2022-9-22 to the solar powered box
+# adding fMult for single control global frequency shifting
+# rejected LC709203F I2C battery gauge, too fussy for what it does.
+# adding the charger timer
+# v1.6 deployed 2022-9-30 in landscape lighting charged box
 #
 # imports used everywhere
 import gc
@@ -49,21 +53,6 @@ GPIO_AMP_SHUTDOWN    = const(19)
 GPIO_CHARGE_COMPLETE = const(18)
 GPIO_STARTSTOP_LED   = const(26)
 GPIO_TEMP_SENSOR     = const( 4)
-GPIO_I2C_SDA         = const( 2)
-GPIO_I2C_SCL         = const( 3)
-I2C_DEVICE           = const( 1)
-
-LC709203F_I2CADDR_DEFAULT     = const(0x0B)
-LC709203F_CMD_ICVERSION       = const(0x11)
-LC709203F_CMD_BATTPROF        = const(0x12)
-LC709203F_CMD_POWERMODE       = const(0x15)
-LC709203F_CMD_APA             = const(0x0B)
-LC709203F_CMD_INITRSOC        = const(0x07)
-LC709203F_CMD_CELLVOLTAGE     = const(0x09)
-LC709203F_CMD_CELLITE         = const(0x0F)
-LC709203F_CMD_CELLTEMPERATURE = const(0x08)
-LC709203F_CMD_THERMISTORB     = const(0x06)
-LC709203F_CMD_STATUSBIT       = const(0x16)
 
 # https://ifttt.com/maker_webhooks
 ifttt = "\r\nPOST /trigger/{}/with/key/{} HTTP/1.1\r\nHost: maker.ifttt.com\r\nConnection: close\r\n\r\n"
@@ -118,12 +107,16 @@ html = """<!DOCTYPE html>
       <td><br/><a href="/sound/30">30 secs</a></td>
     </tr><tr>
       <td>{}<br/><a href="/freq1/05000">5kHz</a></td>
-      <td><br/><a href="/freq1/10000">10kHz</a></td>
-      <td><br/><a href="/freq1/20000">20kHz</a></td>
+      <td>{}<br/><a href="/freq1/10000">10kHz</a></td>
+      <td>{}<br/><a href="/freq1/20000">20kHz</a></td>
     </tr><tr>
       <td>{}<br/><a href="/freq2/04500">4.5kHz</a></td>
-      <td><br/><a href="/freq2/09900">9.9kHz</a></td>
-      <td><br/><a href="/freq2/19000">19kHz</a></td>
+      <td>{}<br/><a href="/freq2/09900">9.9kHz</a></td>
+      <td>{}<br/><a href="/freq2/19000">19kHz</a></td>
+    </tr><tr>
+      <td>{}<br/><a href="/fMult/0.149">.15</a> <a href="/fMult/0.248">.25</a> <a href="/fMult/0.465">.47</a></td>
+      <td><br/><a href="/fMult/1.000">1.0x</a></td>
+      <td><br/><a href="/fMult/1.241">1.24</a> <a href="/fMult/1.551">1.55</a></td>
     </tr><tr>
       <td>{}<br/><a href="/fRng1/0.000">Constant</a></td>
       <td><br/><a href="/fRng1/0.100">+/-0.1x</a></td>
@@ -492,6 +485,7 @@ async def serve_client( reader, writer ):
     global shutdown
     global freq1
     global freq2
+    global fMult
     global fRng1
     global fRng2
     global oscP1
@@ -505,6 +499,7 @@ async def serve_client( reader, writer ):
     global myIp
     global startTime
     global i2c
+    global chargeCompleteTime
 
     if VERBOSE:
       print("Client connected")
@@ -542,6 +537,11 @@ async def serve_client( reader, writer ):
       elif 0 == request.find('/freq2/'):
         freq2 = int(request[7:12])
         stateis = "Freq2 %sHz" % freq2
+        easyPage = False
+          
+      elif 0 == request.find('/fMult/'):
+        fMult = float( request[7:12] )
+        stateis = "fMult %sx" % fMult
         easyPage = False
           
       elif 0 == request.find('/fRng1/'):
@@ -650,8 +650,8 @@ async def serve_client( reader, writer ):
       farenheit   = temperature * 1.8 + 32.0
           
 # read the battery voltage          
-      reading = batt_adc.read_u16() * 3.3 / 32767.0
-      battV   = reading * (150.0+68.0) / 150.0
+      reading = batt_adc.read_u16() * conversion_factor
+      battV   = 1.06936 * reading * (150.0+68.0) / 150.0
 
 # Read strongest connection to ssid, but only on advanced page
       maxrssi = -200
@@ -659,19 +659,20 @@ async def serve_client( reader, writer ):
         maxrssi = my_rssi( wlan.scan() )
             
 # Read the charging status pins from the MCP73833        
+      if chg_pin.value() == False:
+        cmsg = "Charging"
+      else:
+        cmsg = "Not Charging"
+        
+      if chc_pin.value() == False:
+        cmsg = "Charge Complete"
+        chargeCompleteTime = time.time()
+
+# bq24074 solar charger status pin
 #      if chg_pin.value() == True:
 #        cmsg = "Charging"
 #      else:
 #        cmsg = "Not Charging"
-#        
-#      if chc_pin.value() == True:
-#        cmsg = "Charge Complete"
-
-# bq24074 solar charger
-      if chg_pin.value() == True:
-        cmsg = "Charging"
-      else:
-        cmsg = "Not Charging"
 
 
 # Get the sound timer remaining count
@@ -694,9 +695,9 @@ async def serve_client( reader, writer ):
                                    farenheit, counter,
                                    battV, cmsg, ssid, maxrssi,
                                    startTime, time_string(),
-                                   freq1, freq2,
-                                   fRng1, fRng2,
-                                   oscP1, oscP2,
+                                   fMult * freq1 * (1-fRng1), fMult * freq1, fMult * freq1 * (1+fRng1),
+                                   fMult * freq2 * (1-fRng2), fMult * freq2, fMult * freq2 * (1+fRng2),
+                                   fMult, fRng1, fRng2, oscP1, oscP2,
                                    tSlic ) )
     
     await writer.drain()
@@ -707,79 +708,6 @@ async def serve_client( reader, writer ):
       print("Disconnected", request )       
 # endof async def serve_interface():
 
-def generate_crc( data ):
-# 8-bit CRC algorithm for checking data
-    crc = 0x00
-    # calculates 8-Bit checksum with given polynomial
-    for byte in data:
-      crc ^= byte
-      for _ in range(8):
-        if crc & 0x80:
-          crc = (crc << 1) ^ 0x07
-        else:
-          crc <<= 1
-        crc &= 0xFF
-    return crc
-
-def write_word( command, data ):
-    global i2c
-    
-    buf[0] = LC709203F_I2CADDR_DEFAULT * 2  # write byte
-    buf[1] = command  # command / register
-    buf[2] = data & 0xFF
-    buf[3] = (data >> 8) & 0xFF
-    buf[4] = generate_crc( buf[0:4] )
-    i2c.write(self._buf[1:5])
-    
-# Write bytes to the specified register.
-def reg_write( reg, data ):
-    global i2c
-    
-    # Construct message
-    msg = bytearray()
-    msg.append(data)
-    
-    # Write out message to register
-    i2c.writeto_mem(LC709203F_I2CADDR, reg, msg)
-    
-# Read byte(s) from specified register. If nbytes > 1, read from consecutive registers.
-def reg_read( reg, nbytes=1 ):
-    global i2c
-    
-    # Check to make sure caller is asking for 1 or more bytes
-    if nbytes < 1:
-      return bytearray()
-    
-    # Request data from specified register(s) over I2C
-    data = i2c.readfrom_mem(LC709203F_I2CADDR, reg, nbytes)
-    
-    return data
-
-
-# look for the battery monitor, initialize it if it is connected
-def init_LC709203F():
-    global i2c
-    global LC709203F_present
-
-    LC709203F_present = False
-    
-# Create I2C object
-    i2c = machine.I2C(I2C_DEVICE, scl=machine.Pin(GPIO_I2C_SCL), sda=machine.Pin(GPIO_I2C_SDA))
-
-# Print out any addresses found
-    devices = i2c.scan()
-
-    if devices:
-      for d in devices:
-        print( "i2c device @", hex(d) )
-        if d == LC709203F_I2CADDR:
-          LC709203F_present = True
-          write_word(LC709203F_CMD_APA, 0x36)
-    else: # if devices:
-      print( "no i2c devices found" )  
-
-# endof def init_LC709203F()    
-
 # The Web Server Thread - turns GET requests into actions onboard
 # also issues queries to an NTP server and POSTs to IFTTT
 async def main():
@@ -788,6 +716,7 @@ async def main():
     global shutdown
     global freq1
     global freq2
+    global fMult
     global fRng1
     global fRng2
     global oscP1
@@ -803,10 +732,8 @@ async def main():
     global si1
     global si2
     global gcCycle
-    global i2c
-    global LC709203F_present
     
-    LC709203F_present = False
+    VERBOSE = False
     wifi_connected = False
     ws_launched = False
     easyPage = True
@@ -819,18 +746,20 @@ async def main():
     shutdown = False
     freq1 = 20000
     freq2 = 19000
+    fMult = 1.0
     fRng1 = 0.3
     fRng2 = 0.1
     oscP1 = 225
     oscP2 = 3500
     tSlic = 0.04
 
+    chargeCompleteTime = 0
+    chargeStartTime = 0
+    charging = False
+    
 # Set country code, opens legal WiFi channels
     from rp2 import country
     country('US')
-    
-# look for the i2c battery monitor    
-    init_LC709203F()
     
 # Launch the sound maker
     asyncio.create_task( sound_player() )
@@ -849,20 +778,39 @@ async def main():
             
       await asyncio.sleep(1.0)
       
-      # Here: implement automatic POST calls to IFTTT when needed (to charge batteries)
-      
+      # These tasks happen once a minute, or more often when the webpage is being served
       gcCycle = gcCycle - 1
       if ( gcCycle <= 0 ):
         if VERBOSE:
-          print( 'doing gc0 Status:',wlan.status(),'RSSI:',my_rssi( wlan.scan() ) )
+          print( 'Doing manual gc. Status:',wlan.status(),'RSSI:',my_rssi( wlan.scan() ) )
+          
+        # Capture time of system start, as soon as we have valid time from NTP  
         if ( len( startTime ) < 4 ):
           print( 'getting startTime' )
           set_time()
           print( 'started',time_string() )
+          
+        if charging:
+          # Charge for a maximum of 2 hours, or when the charge complete light lights
+          if (( time.time() - chargeStartTime ) > 7200) or (chc_pin.value() == False):
+            chargeCompleteTime = time.time()
+            await pico_full()
+            charging = False           
+        else: # charging was False
+          t = time.localtime()
+          sscc = time.time() - chargeCompleteTime # seconds since charge complete
+          # If it has been more than 24 hours since the last charge completed,
+          # or the hour is 8pm and more than 9 hours since the last charge completed, start charging now    
+          if ( sscc > 86400 ) or (( t[3] == 20 ) and ( sscc > 32400 )):
+            chargeStartTime = time.time()
+            await pico_thirsty()
+            charging = True
+
         # https://docs.micropython.org/en/latest/reference/constrained.html#control-of-garbage-collection
         gc.collect()
         gc.threshold(gc.mem_free() // 4 + gc.mem_alloc())
         gcCycle = 60 # 1 minute between cycles
+      # if ( gcCycle <= 0 ):
     # while shutdown == False:
     
     try:
@@ -885,6 +833,7 @@ async def sound_player():
     global shutdown
     global freq1
     global freq2
+    global fMult
     global fRng1
     global fRng2
     global oscP1
@@ -896,6 +845,7 @@ async def sound_player():
     shutdown = False
     freq1 = 20000
     freq2 = 19000
+    fMult = 1.0
     fRng1 = 0.3
     fRng2 = 0.1
     oscP1 = 225
@@ -932,12 +882,12 @@ async def sound_player():
           counter -= 1
           oscC1 = 1000.0 / float(oscP1)  # convert the modulation periods (in ms) to coefficients
           oscC2 = 1000.0 / float(oscP2)
-          fMod1 = float(freq1) * fRng1   # frequency modulation depths
-          fMod2 = float(freq2) * fRng2
+          fMod1 = float(freq1) * fMult * fRng1   # frequency modulation depths
+          fMod2 = float(freq2) * fMult * fRng2
           tDone = targ + math.pi * 2.0
           slicI = math.pi * 2.0 * tSlic;
-          fc1   = freq1
-          fc2   = freq2
+          fc1   = int( float(freq1) * fMult ) 
+          fc2   = int( float(freq2) * fMult )
           tSlp  = tSlic
           
           while targ < tDone:            # work through the modulators for the next second
